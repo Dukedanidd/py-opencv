@@ -1,0 +1,43 @@
+# Entorno virtual
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Archivos de entorno
+.env
+.env.local
+
+# Configuración de editores
+.vscode/
+.idea/
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Builds / distribuciones
+build/
+dist/
+*.egg-info/
+
+# Archivos temporales
+*.tmp
+*.bak
+
+# Capturas o videos generados
+captures/
+recordings/
+output/
+exports/
+
+# Modelos o assets pesados
+models/
+assets/generated/
