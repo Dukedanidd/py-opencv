@@ -3,11 +3,12 @@ import mediapipe as mp
 import math
 import numpy as np
 import time
+import random
 from collections import deque
 
 
 # =========================
-# CONFIGURACIÓN
+# CONFIGURACIÓN GENERAL
 # =========================
 
 CAMERA_WIDTH = 960
@@ -15,21 +16,37 @@ CAMERA_HEIGHT = 540
 
 PINCH_THRESHOLD = 60
 
-MAX_TRAIL_POINTS = 45
-TRAIL_LIFETIME = 0.85
-
-LINE_PARTICLES = 18
 BACKGROUND_BRIGHTNESS = 0.68
 VISUAL_INTENSITY = 1.25
 
 
 # =========================
-# FUNCIONES
+# CONFIGURACIÓN TRAIL / MARCADOR
+# =========================
+
+MAX_TRAIL_POINTS = 45
+TRAIL_LIFETIME = 0.85
+LINE_PARTICLES = 18
+
+
+# =========================
+# CONFIGURACIÓN GALAXIA
+# =========================
+
+MAX_GALAXY_PARTICLES = 120
+GALAXY_SPAWN_RATE = 5
+GALAXY_CONNECTION_DISTANCE = 65
+GALAXY_LIFETIME = 1.2
+
+
+# =========================
+# FUNCIONES BÁSICAS
 # =========================
 
 def calculate_distance(point1, point2):
     x1, y1 = point1
     x2, y2 = point2
+
     return math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
 
 
@@ -40,7 +57,7 @@ def midpoint(point1, point2):
     )
 
 
-def smooth_point(previous, current, factor=0.35):
+def smooth_point(previous, current, factor=0.45):
     if previous is None:
         return current
 
@@ -50,13 +67,16 @@ def smooth_point(previous, current, factor=0.35):
     return (x, y)
 
 
+# =========================
+# TRAIL / MARCADOR DE LUZ
+# =========================
+
 def draw_soft_circle(canvas, center, radius, brightness):
     x, y = center
-    color = (brightness, brightness, brightness)
 
     cv2.circle(canvas, (x, y), radius + 8, (40, 40, 40), -1)
     cv2.circle(canvas, (x, y), radius + 4, (120, 120, 120), -1)
-    cv2.circle(canvas, (x, y), radius, color, -1)
+    cv2.circle(canvas, (x, y), radius, (brightness, brightness, brightness), -1)
 
 
 def draw_trail(canvas, trail_points):
@@ -74,7 +94,7 @@ def draw_trail(canvas, trail_points):
     if len(valid_points) < 2:
         return
 
-    # Dibujar líneas entre puntos consecutivos, pero con grosor/brillo según edad
+    # Dibuja una línea entre puntos consecutivos del movimiento
     for i in range(1, len(valid_points)):
         p1, a1 = valid_points[i - 1]
         p2, a2 = valid_points[i]
@@ -93,7 +113,7 @@ def draw_trail(canvas, trail_points):
         cv2.line(canvas, p1, p2, (b_mid, b_mid, b_mid), thickness_mid)
         cv2.line(canvas, p1, p2, (b_core, b_core, b_core), thickness_core)
 
-    # Partículas alrededor del trazo, no en una línea perfecta
+    # Partículas sueltas alrededor del trazo
     for point, alpha in valid_points[::2]:
         x, y = point
 
@@ -104,7 +124,13 @@ def draw_trail(canvas, trail_points):
             radius = np.random.randint(1, 4)
             brightness = int(np.random.randint(150, 256) * alpha)
 
-            cv2.circle(canvas, (px, py), radius, (brightness, brightness, brightness), -1)
+            cv2.circle(
+                canvas,
+                (px, py),
+                radius,
+                (brightness, brightness, brightness),
+                -1
+            )
 
 
 def draw_current_marker(canvas, point):
@@ -117,7 +143,13 @@ def draw_current_marker(canvas, point):
         radius = np.random.randint(1, 4)
         brightness = np.random.randint(160, 256)
 
-        cv2.circle(canvas, (px, py), radius, (brightness, brightness, brightness), -1)
+        cv2.circle(
+            canvas,
+            (px, py),
+            radius,
+            (brightness, brightness, brightness),
+            -1
+        )
 
 
 def remove_old_points(trail_points):
@@ -125,6 +157,109 @@ def remove_old_points(trail_points):
 
     while trail_points and now - trail_points[0][1] > TRAIL_LIFETIME:
         trail_points.popleft()
+
+
+# =========================
+# GALAXIA
+# =========================
+
+class GalaxyParticle:
+    def __init__(self, x, y, spread):
+        angle = random.uniform(0, math.pi * 2)
+        speed = random.uniform(0.4, 2.2) * spread
+
+        self.x = x + random.uniform(-12, 12)
+        self.y = y + random.uniform(-12, 12)
+
+        self.vx = math.cos(angle) * speed
+        self.vy = math.sin(angle) * speed
+
+        self.created_at = time.time()
+        self.life_time = random.uniform(0.7, GALAXY_LIFETIME)
+
+        self.size = random.randint(1, 3)
+
+    def update(self):
+        self.x += self.vx
+        self.y += self.vy
+
+        # fricción para que no salgan disparadas infinito
+        self.vx *= 0.975
+        self.vy *= 0.975
+
+    def alpha(self):
+        age = time.time() - self.created_at
+        return max(0, 1 - age / self.life_time)
+
+    def is_alive(self):
+        return self.alpha() > 0
+
+
+def spawn_galaxy_particles(particles, center, pinch_distance):
+    if len(particles) >= MAX_GALAXY_PARTICLES:
+        return
+
+    # La apertura de los dedos controla la expansión
+    spread = np.interp(
+        pinch_distance,
+        [PINCH_THRESHOLD, 220],
+        [0.4, 2.0]
+    )
+
+    spread = max(0.4, min(spread, 2.0))
+
+    for _ in range(GALAXY_SPAWN_RATE):
+        if len(particles) < MAX_GALAXY_PARTICLES:
+            particles.append(
+                GalaxyParticle(center[0], center[1], spread)
+            )
+
+
+def draw_galaxy(canvas, particles):
+    # Actualizar partículas
+    for particle in particles:
+        particle.update()
+
+    # Eliminar partículas muertas
+    particles[:] = [p for p in particles if p.is_alive()]
+
+    # Conectar partículas cercanas
+    for i in range(len(particles)):
+        for j in range(i + 1, len(particles)):
+            p1 = particles[i]
+            p2 = particles[j]
+
+            d = calculate_distance(
+                (p1.x, p1.y),
+                (p2.x, p2.y)
+            )
+
+            if d < GALAXY_CONNECTION_DISTANCE:
+                alpha = min(p1.alpha(), p2.alpha())
+                intensity = int(
+                    120 * alpha * (1 - d / GALAXY_CONNECTION_DISTANCE)
+                )
+
+                cv2.line(
+                    canvas,
+                    (int(p1.x), int(p1.y)),
+                    (int(p2.x), int(p2.y)),
+                    (intensity, intensity, intensity),
+                    1
+                )
+
+    # Dibujar nodos
+    for particle in particles:
+        alpha = particle.alpha()
+        brightness = int(255 * alpha)
+
+        cv2.circle(
+            canvas,
+            (int(particle.x), int(particle.y)),
+            particle.size,
+            (brightness, brightness, brightness),
+            -1
+        )
 
 
 # =========================
@@ -157,11 +292,12 @@ hands = mp_hands.Hands(
 
 
 # =========================
-# ESTADO
+# ESTADO DEL PROGRAMA
 # =========================
 
 trail_points = deque(maxlen=MAX_TRAIL_POINTS)
 last_draw_point = None
+galaxy_particles = []
 
 
 # =========================
@@ -221,6 +357,13 @@ while True:
             remove_old_points(trail_points)
             draw_trail(canvas, trail_points)
 
+            spawn_galaxy_particles(
+                galaxy_particles,
+                draw_point,
+                pinch_distance
+            )
+
+            # Puntos guía de los dedos
             cv2.circle(canvas, thumb_tip, 6, (220, 220, 220), -1)
             cv2.circle(canvas, index_tip, 6, (220, 220, 220), -1)
             cv2.line(canvas, thumb_tip, index_tip, (90, 90, 90), 1)
@@ -230,6 +373,10 @@ while True:
         draw_trail(canvas, trail_points)
         last_draw_point = None
 
+    # La galaxia se dibuja siempre, para que pueda desvanecerse aunque cambies de gesto
+    draw_galaxy(canvas, galaxy_particles)
+
+    # Texto de estado
     cv2.putText(
         canvas,
         f"Modo: {gesture_mode}",
@@ -250,7 +397,7 @@ while True:
         2
     )
 
-    # Glow más barato que antes
+    # Glow
     glow = cv2.GaussianBlur(canvas, (0, 0), 6)
 
     visual_layer = cv2.addWeighted(
@@ -261,6 +408,7 @@ while True:
         0
     )
 
+    # Cámara oscurecida
     dark_frame = cv2.addWeighted(
         frame,
         BACKGROUND_BRIGHTNESS,
@@ -269,6 +417,7 @@ while True:
         0
     )
 
+    # Cámara + efectos
     final_output = cv2.addWeighted(
         dark_frame,
         1.0,
