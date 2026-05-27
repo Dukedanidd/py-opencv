@@ -587,7 +587,7 @@ while True:
         0
     )
 
-    cv2.imshow("Hand Galaxy", final_output)
+    cv2.imshow("WebCam", final_output)
 
     key = cv2.waitKey(1) & 0xFF
 
