@@ -2,8 +2,29 @@ import cv2
 import mediapipe as mp
 import math
 
+
 # =========================
-# 1. ABRIR CÁMARA
+# CONFIGURACIÓN
+# =========================
+
+PINCH_THRESHOLD = 60
+
+
+# =========================
+# FUNCIONES
+# =========================
+
+def calculate_distance(point1, point2):
+    x1, y1 = point1
+    x2, y2 = point2
+
+    distance = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+
+    return distance
+
+
+# =========================
+# ABRIR CÁMARA
 # =========================
 
 cap = cv2.VideoCapture(0)
@@ -14,7 +35,7 @@ if not cap.isOpened():
 
 
 # =========================
-# 2. CONFIGURAR MEDIAPIPE
+# CONFIGURAR MEDIAPIPE
 # =========================
 
 mp_hands = mp.solutions.hands
@@ -27,20 +48,9 @@ hands = mp_hands.Hands(
     min_tracking_confidence=0.7
 )
 
-# =========================
-# 3. FUNCIONES AUXILIARES
-# =========================
-
-def calculate_distance(point1, point2):
-    x1, y1 = point1
-    x2, y2 = point2
-
-    distance = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
-
-    return distance
 
 # =========================
-# 3. LOOP PRINCIPAL
+# LOOP PRINCIPAL
 # =========================
 
 while True:
@@ -50,19 +60,19 @@ while True:
         print("No se pudo leer el frame.")
         break
 
-    # Voltear imagen para que funcione como espejo
+    # Voltear la imagen para que funcione como espejo
     frame = cv2.flip(frame, 1)
 
-    # Obtener tamaño real del frame
+    # Obtener tamaño del frame
     height, width, _ = frame.shape
 
-    # MediaPipe necesita RGB, OpenCV usa BGR
+    # MediaPipe usa RGB, OpenCV usa BGR
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-    # Procesar imagen con MediaPipe
+    # Procesar frame con MediaPipe
     result = hands.process(rgb_frame)
 
-    # Si detecta una mano
+    # Si se detecta una mano
     if result.multi_hand_landmarks:
         for hand_landmarks in result.multi_hand_landmarks:
 
@@ -73,7 +83,7 @@ while True:
                 mp_hands.HAND_CONNECTIONS
             )
 
-            # Convertir landmarks normalizados a pixeles
+            # Convertir landmarks normalizados a coordenadas en pixeles
             points = []
 
             for landmark in hand_landmarks.landmark:
@@ -82,8 +92,8 @@ while True:
                 points.append((x, y))
 
             # Puntos importantes
-            thumb_tip = points[4]   # punta del pulgar
-            index_tip = points[8]   # punta del índice
+            thumb_tip = points[4]   # Punta del pulgar
+            index_tip = points[8]   # Punta del índice
 
             # Calcular centro aproximado de la palma
             palm_points = [0, 5, 9, 13, 17]
@@ -93,12 +103,46 @@ while True:
 
             hand_center = (center_x, center_y)
 
+            # Calcular distancia entre pulgar e índice
+            pinch_distance = calculate_distance(thumb_tip, index_tip)
+
+            # Detectar gesto
+            if pinch_distance < PINCH_THRESHOLD:
+                gesture_mode = "CERRADO"
+                mode_color = (0, 255, 0)
+            else:
+                gesture_mode = "ABIERTO"
+                mode_color = (0, 0, 255)
+
+            # Dibujar línea entre pulgar e índice
+            cv2.line(frame, thumb_tip, index_tip, (255, 255, 255), 3)
+
             # Dibujar puntos importantes
             cv2.circle(frame, thumb_tip, 10, (255, 255, 255), -1)
             cv2.circle(frame, index_tip, 10, (255, 255, 255), -1)
-            cv2.circle(frame, hand_center, 10, (0, 0, 255), -1)
+            cv2.circle(frame, hand_center, 10, (255, 0, 0), -1)
 
-            # Texto para identificar
+            # Mostrar información en pantalla
+            cv2.putText(
+                frame,
+                f"Distancia: {int(pinch_distance)}",
+                (30, 50),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 255, 255),
+                2
+            )
+
+            cv2.putText(
+                frame,
+                f"Modo: {gesture_mode}",
+                (30, 90),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                mode_color,
+                2
+            )
+
             cv2.putText(
                 frame,
                 "Pulgar",
@@ -125,7 +169,7 @@ while True:
                 (hand_center[0] + 10, hand_center[1]),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
-                (0, 0, 255),
+                (255, 0, 0),
                 2
             )
 
@@ -140,7 +184,7 @@ while True:
 
 
 # =========================
-# 4. CERRAR TODO
+# CERRAR TODO
 # =========================
 
 cap.release()
